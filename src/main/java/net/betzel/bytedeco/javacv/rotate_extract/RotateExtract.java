@@ -40,7 +40,7 @@ public class RotateExtract {
 
     private void execute(String[] args) throws Exception {
         // If no params provided, compute the default image
-        BufferedImage bufferedImage = args.length >= 1 ? ImageIO.read(new File(args[0])) : ImageIO.read(this.getClass().getResourceAsStream("/images/right.jpg"));
+        BufferedImage bufferedImage = args.length >= 1 ? ImageIO.read(new File(args[0])) : ImageIO.read(this.getClass().getResourceAsStream("/images/left.jpg"));
         logger.info("Image type: " + bufferedImage.getType());
         // Convert BufferedImage to Mat and create AutoCloseable objects
         try (opencv_core.Mat matrix = new OpenCVFrameConverter.ToMat().convert(new Java2DFrameConverter().convert(bufferedImage));
@@ -64,36 +64,53 @@ public class RotateExtract {
     }
 
     private void rotateExtract(opencv_core.Mat contour, opencv_core.Mat matrix) {
-        opencv_core.RotatedRect rotatedRect = minAreaRect(contour);
-        float angle = rotatedRect.angle();
-        logger.info("Angle " + angle);
-        opencv_core.Size2f rect_size = rotatedRect.size();
-        opencv_core.Mat rotated;
-        if (rect_size.width() < rect_size.height()) {
-            angle += 90.0;
-            float width = rect_size.width();
-            float height = rect_size.height();
-            rect_size.width(height);
-            rect_size.height(width);
-            rotated = new opencv_core.Mat(new opencv_core.Size(matrix.rows(), matrix.cols()), matrix.type());
-        } else {
-            rotated = new opencv_core.Mat(matrix.size(), matrix.type());
+        opencv_core.Mat rotatedMatrix = null;
+        opencv_core.Size rotatedMatrixSize = null;
+        opencv_core.Mat rotationMatrix = null;
+        opencv_core.RotatedRect rotatedRect = null;
+        try (opencv_core.Mat cropped = new opencv_core.Mat(); opencv_core.Size croppedSize = new opencv_core.Size()){
+            rotatedRect = minAreaRect(contour);
+            logger.info("Angle " + rotatedRect.angle());
+            if (rotatedRect.size().width() < rotatedRect.size().height()) {
+                rotatedRect.angle(rotatedRect.angle() + 90);
+                float width = rotatedRect.size().width();
+                float height = rotatedRect.size().height();
+                rotatedRect.size().width(height);
+                rotatedRect.size().height(width);
+                rotatedMatrixSize = new opencv_core.Size(matrix.rows(), matrix.cols());
+                rotatedMatrix = new opencv_core.Mat(rotatedMatrixSize, matrix.type());
+            } else {
+                rotatedMatrix = new opencv_core.Mat(matrix.size(), matrix.type());
+            }
+            int centerOffsetY = rotatedMatrix.rows() / 2 - (int) rotatedRect.center().y();
+            int centerOffsetX = rotatedMatrix.cols() / 2 - (int) rotatedRect.center().x();
+            rotationMatrix = getRotationMatrix2D(rotatedRect.center(), rotatedRect.angle(), 1.0);
+            DoubleIndexer doubleIndexer = rotationMatrix.createIndexer();
+            doubleIndexer.put(0, 2, doubleIndexer.get(0, 2) + centerOffsetX);
+            rotatedRect.center().x(rotatedRect.center().x() + centerOffsetX);
+            doubleIndexer.put(1, 2, doubleIndexer.get(1, 2) + centerOffsetY);
+            rotatedRect.center().y(rotatedRect.center().y() + centerOffsetY);
+            doubleIndexer.release();
+            warpAffine(matrix, rotatedMatrix, rotationMatrix, rotatedMatrix.size(), INTER_CUBIC, BORDER_CONSTANT, opencv_core.Scalar.WHITE);
+            showMatrix("WarpAffine", rotatedMatrix);
+            croppedSize.height((int) rotatedRect.size().height());
+            croppedSize.width((int) rotatedRect.size().width());
+            getRectSubPix(rotatedMatrix, croppedSize, rotatedRect.center(), cropped);
+            showMatrix("Rotated", cropped);
+        } finally {
+            if (rotationMatrix != null) {
+                rotationMatrix.deallocate();
+            }
+            if (rotatedRect != null) {
+                rotatedRect.deallocate();
+            }
+            if (rotatedMatrix != null) {
+                rotatedMatrix.deallocate();
+            }
+            if (rotatedMatrixSize != null) {
+                rotatedMatrixSize.deallocate();
+            }
         }
-        int centerOffsetY = rotated.rows() / 2 - (int)rotatedRect.center().y();
-        int centerOffsetX = rotated.cols() / 2 - (int)rotatedRect.center().x();
-        opencv_core.Mat rotationMatrix = getRotationMatrix2D(rotatedRect.center(), angle, 1.0);
-        DoubleIndexer doubleIndexer = rotationMatrix.createIndexer();
-        doubleIndexer.put(0, 2, doubleIndexer.get(0, 2) + centerOffsetX);
-        rotatedRect.center().x(rotatedRect.center().x() + centerOffsetX);
-        doubleIndexer.put(1, 2, doubleIndexer.get(1, 2)  + centerOffsetY);
-        rotatedRect.center().y(rotatedRect.center().y() + centerOffsetY);
-        doubleIndexer.release();
-
-        warpAffine(matrix, rotated, rotationMatrix, rotated.size(), INTER_CUBIC, BORDER_CONSTANT, opencv_core.Scalar.WHITE);
-        showMatrix("WarpAffine", rotated);
-        opencv_core.Mat cropped = new opencv_core.Mat();
-        getRectSubPix(rotated, new opencv_core.Size((int) rect_size.width(), (int) rect_size.height()), rotatedRect.center(), cropped);
-        showMatrix("Rotated", cropped);
     }
 
     protected static void showMatrix(String title, opencv_core.Mat matrix) {
